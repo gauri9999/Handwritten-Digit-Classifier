@@ -1,47 +1,64 @@
-
 # Handwritten Digit Classifier
 
 ## Project Overview
-This project identifies handwritten digits (0-9)
-using Machine Learning and the K-Nearest Neighbors
-(KNN) algorithm.
-
-## Dataset
-- Dataset: Scikit-learn Digits Dataset
-- Total Images: 1797
-- Image Size: 8x8 pixels
-- Classes: 0 to 9
+This project identifies handwritten digits (0–9) using Machine Learning algorithms. It compares different classification models and uses K-Nearest Neighbors (KNN) and Support Vector Machine (SVM) to recognize handwritten digits.
 
 ## Technologies Used
 - Python
 - NumPy
-- Matplotlib
 - Pandas
+- Matplotlib
 - Scikit-learn
 - Google Colab
 
-## Machine Learning Algorithm
-K-Nearest Neighbors (KNN)
+## Dataset
+1. Scikit-learn Digits Dataset (8×8 images)
+2. MNIST Dataset (28×28 images)
 
-## Train-Test Split
-- Training Data: 80%
-- Testing Data: 20%
+## Machine Learning Models
+The following four models were compared:
 
-## K Value Comparison
+- Logistic Regression
+- K-Nearest Neighbors (KNN)
+- Support Vector Machine (SVM)
+- Random Forest
 
-| K Value | Accuracy |
-|---------|----------|
-| 1 | 97.78% |
-| 3 | 98.33% |
-| 5 | 98.61% |
-| 9 | 98.06% |
+## Model Accuracy Comparison
 
-## Best Model
-KNN with K = 5
+| Model | Accuracy |
+|---|---:|
+| Logistic Regression | 95.34% |
+| KNN | 98.33% |
+| SVM | 98.61% |
+| Random Forest | 97.36% |
 
-## Final Accuracy
-98.61%
+## Cross-Validation
+Used 5-Fold Cross-Validation to compare the performance of four machine learning models.
+
+## MNIST Results
+- Dataset: MNIST
+- Image Size: 28×28
+- SVM Test Accuracy: 95.7%
+
+## Model Evaluation
+- Accuracy Comparison Graph
+- Confusion Matrix
+- Classification Report
+- Misclassified Images Visualization
+
+## Model Saving
+The trained MNIST model was saved using Joblib.
+
+File: `digit_model.joblib`
+
+## Project Features
+- Handwritten digit recognition (0–9)
+- Comparison of multiple ML algorithms
+- Model evaluation using accuracy
+- Confusion matrix visualization
+- Prediction of handwritten digits
+- Saving and loading trained models
 
 ## Conclusion
-The model successfully classifies handwritten
-digits with 98.61% test accuracy.
+The project successfully classifies handwritten digits using Machine Learning. SVM achieved 98.61% accuracy on the original Digits dataset and 95.7% test accuracy on the MNIST dataset.
+
