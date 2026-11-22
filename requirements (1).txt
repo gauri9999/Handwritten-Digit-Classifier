@@ -1,0 +1,5 @@
+gradio==6.32.0
+numpy
+scikit-learn==1.6.1
+pillow
+joblib==1.6.0
