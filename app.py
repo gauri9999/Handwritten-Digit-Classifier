@@ -1,19 +1,25 @@
-
-import gradio as gr
+import gradio as gr # type: ignore
 import numpy as np
 import joblib
 
 from PIL import Image, ImageOps
 
-# Load the trained model only once
-MODEL_PATH = "/content/drive/MyDrive/SkillMe_Projects /digit_model.joblib"
+
+# =====================================
+# 1. LOAD TRAINED MODEL
+# =====================================
+
+MODEL_PATH = "digit_model.joblib"
 
 model = joblib.load(MODEL_PATH)
 
 print("VisionAI model loaded successfully!")
 
 
-# Convert input into a PIL image
+# =====================================
+# 2. CONVERT INPUT INTO PIL IMAGE
+# =====================================
+
 def convert_to_pil(image):
 
     if image is None:
@@ -21,158 +27,213 @@ def convert_to_pil(image):
 
     # Handle Gradio Sketchpad dictionary
     if isinstance(image, dict):
+
         image = image.get("composite")
 
-    if image is None:
-        return None
+        if image is None:
+            raise ValueError("Please draw a digit first.")
 
+    # Convert NumPy array into PIL image
     if isinstance(image, np.ndarray):
-        if image.size == 0:
-            return None
 
         if image.dtype != np.uint8:
-            image = np.nan_to_num(image)
-            if image.max() <= 1:
-                image = image * 255
             image = np.clip(image, 0, 255).astype(np.uint8)
 
         image = Image.fromarray(image)
 
+    if not isinstance(image, Image.Image):
+        raise ValueError("Invalid image format.")
+
     return image
 
 
-# Preprocess image
+# =====================================
+# 3. IMAGE PREPROCESSING
+# =====================================
+
 def preprocess_image(image):
 
-    image = image.convert("RGB")
+    image = convert_to_pil(image)
+
+    if image is None:
+        raise ValueError("Please draw or upload an image.")
+
+    # Convert to grayscale
     image = ImageOps.grayscale(image)
 
-    # Invert white background into black
-    arr = np.array(image)
-
-    if arr.mean() > 127:
+    # Invert image if background is white
+    if np.array(image).mean() > 127:
         image = ImageOps.invert(image)
 
-    arr = np.array(image)
+    # Find digit boundaries
+    image_array = np.array(image)
 
-    # Detect empty canvas
-    if arr.max() < 20:
-        raise ValueError("Please draw a digit or upload a valid image.")
+    if image_array.max() == 0:
+        raise ValueError("No digit detected. Please draw clearly.")
 
-    # Resize to MNIST dimensions
+    # Crop around the digit
+    bbox = image.getbbox()
+
+    if bbox:
+        image = image.crop(bbox)
+
+    # Resize image to MNIST size
+    image = ImageOps.pad(
+        image,
+        (20, 20),
+        color=0
+    )
+
+    # Add 4-pixel padding
+    image = ImageOps.expand(
+        image,
+        border=4,
+        fill=0
+    )
+
+    # Ensure image is 28x28
     image = image.resize((28, 28))
 
-    arr = np.array(image).astype("float32")
-
     # Normalize pixel values
-    arr = arr / 255.0
+    image_array = np.array(image).astype("float32") / 255.0
 
-    # Flatten into 784 features
-    return arr.reshape(1, 784)
+    # Flatten image into 784 features
+    image_array = image_array.reshape(1, 784)
+
+    return image_array
 
 
-# Predict handwritten digit
-def predict_digit(sketch, uploaded_image):
+# =====================================
+# 4. PREDICT DIGIT
+# =====================================
+
+def predict_digit(image):
 
     try:
 
-        # Uploaded image gets priority
-        image = convert_to_pil(uploaded_image)
-
-        # Otherwise use drawing canvas
-        if image is None:
-            image = convert_to_pil(sketch)
-
-        if image is None:
-            return {}, "Please draw or upload a digit."
-
+        # Preprocess input image
         processed = preprocess_image(image)
 
-        # Get probabilities
-        probabilities = model.predict_proba(processed)[0]
+        # Predict digit
+        prediction = model.predict(processed)[0]
+
+        # Get SVM decision scores
+        scores = model.decision_function(processed)
+
+        scores = np.asarray(scores)
+
+        # Convert decision scores into relative scores
+        if scores.ndim == 1:
+            scores = scores.reshape(1, -1)
+
+        scores = scores[0]
+
+        # Softmax conversion
+        exp_scores = np.exp(scores - np.max(scores))
+
+        probabilities = exp_scores / np.sum(exp_scores)
 
         # Get top 3 predictions
-        top_3 = np.argsort(probabilities)[::-1][:3]
+        top_indices = np.argsort(probabilities)[::-1][:3]
 
         results = {
-            str(int(digit)): float(probabilities[digit])
-            for digit in top_3
+            str(model.classes_[i]): float(probabilities[i])
+            for i in top_indices
         }
 
-        best_digit = int(top_3[0])
-        confidence = probabilities[best_digit] * 100
+        confidence = probabilities[
+            np.where(model.classes_ == prediction)[0][0]
+        ] * 100
 
-        message = (
-            f"Prediction successful! "
-            f"Digit: {best_digit} | "
-            f"Confidence: {confidence:.2f}%"
+        return results, (
+            f"Predicted Digit: {prediction}\n"
+            f"Relative Score: {confidence:.2f}%"
         )
 
-        return results, message
-
-    except ValueError as error:
-        return {}, str(error)
-
     except Exception as error:
-        print("Error:", error)
-        return {}, "Unable to process this image. Please try another image."
+
+        print("ERROR DETAILS:", repr(error))
+
+        return {}, f"Error: {str(error)}"
 
 
-# Build Gradio application
-with gr.Blocks(title="VisionAI - Digit Recognition") as demo:
+# =====================================
+# 5. GRADIO INTERFACE
+# =====================================
+
+with gr.Blocks(
+    theme=gr.themes.Soft(),
+    title="VisionAI - Handwritten Digit Classifier"
+) as demo:
 
     gr.Markdown(
         """
-        # VisionAI - Handwritten Digit Recognition
+        # 🧠 VisionAI
+        ### Handwritten Digit Recognition System
 
-        Draw a digit from 0 to 9 or upload a handwritten digit image.
-        Our machine learning model will predict the result.
+        Draw a digit (0–9) or upload an image.
+        Our Machine Learning model will predict the digit.
         """
     )
 
     with gr.Row():
 
         with gr.Column():
+
             sketch = gr.Sketchpad(
-                label="Draw Your Digit",
+                label="Draw Your Digit Here",
                 type="numpy",
                 height=300,
                 width=300
             )
 
             upload = gr.Image(
-                type="pil",
-                label="Upload Handwritten Digit"
+                label="Or Upload an Image",
+                type="pil"
             )
 
             predict_button = gr.Button(
-                "Predict Digit",
+                "🔍 Predict Digit",
                 variant="primary"
+            )
+
+            clear_button = gr.ClearButton(
+                components=[sketch, upload],
+                value="🗑️ Clear"
             )
 
         with gr.Column():
 
             output = gr.Label(
-                num_top_classes=3,
-                label="Top 3 Predictions"
+                label="Top 3 Predictions",
+                num_top_classes=3
             )
 
-            status = gr.Textbox(
-                label="Prediction Status",
-                interactive=False
+            result_text = gr.Textbox(
+                label="Prediction Result",
+                lines=3
             )
 
+    # Prediction button
     predict_button.click(
         fn=predict_digit,
-        inputs=[sketch, upload],
-        outputs=[output, status]
+        inputs=[sketch],
+        outputs=[output, result_text]
     )
 
-    gr.Markdown(
-        "### Technology: Python | SVM | MNIST | Gradio"
+    upload.change(
+        fn=predict_digit,
+        inputs=[upload],
+        outputs=[output, result_text]
     )
 
+
+# =====================================
+# 6. LAUNCH APPLICATION
+# =====================================
 
 if __name__ == "__main__":
+
+    print("Starting VisionAI application...")
 
     demo.launch(share=True)
