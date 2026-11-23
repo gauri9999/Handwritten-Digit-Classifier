@@ -1,19 +1,27 @@
-import gradio as gr # type: ignore
+import gradio as gr
 import numpy as np
 import joblib
+import tensorflow as tf
 
 from PIL import Image, ImageOps
+from pathlib import Path
 
 
 # =====================================
-# 1. LOAD TRAINED MODEL
+# 1. LOAD BOTH TRAINED MODELS
 # =====================================
 
-MODEL_PATH = "digit_model.joblib"
+BASE_DIR = Path(__file__).resolve().parent
 
-model = joblib.load(MODEL_PATH)
+SVM_PATH = BASE_DIR / "digit_model.joblib"
+CNN_PATH = BASE_DIR / "digit_cnn.keras"
 
-print("VisionAI model loaded successfully!")
+svm_model = joblib.load(SVM_PATH)
+cnn_model = tf.keras.models.load_model(CNN_PATH)
+
+print("SVM model loaded successfully!")
+print("CNN model loaded successfully!")
+print("VisionAI models are ready!")
 
 
 # =====================================
@@ -23,7 +31,7 @@ print("VisionAI model loaded successfully!")
 def convert_to_pil(image):
 
     if image is None:
-        return None
+        raise ValueError("Please draw or upload a digit first.")
 
     # Handle Gradio Sketchpad dictionary
     if isinstance(image, dict):
@@ -36,9 +44,11 @@ def convert_to_pil(image):
     # Convert NumPy array into PIL image
     if isinstance(image, np.ndarray):
 
-        if image.dtype != np.uint8:
-            image = np.clip(image, 0, 255).astype(np.uint8)
+        if np.issubdtype(image.dtype, np.floating):
+            if image.size > 0 and image.max() <= 1.0:
+                image = image * 255
 
+        image = np.clip(image, 0, 255).astype(np.uint8)
         image = Image.fromarray(image)
 
     if not isinstance(image, Image.Image):
@@ -55,110 +65,159 @@ def preprocess_image(image):
 
     image = convert_to_pil(image)
 
-    if image is None:
-        raise ValueError("Please draw or upload an image.")
-
     # Convert to grayscale
     image = ImageOps.grayscale(image)
 
-    # Invert image if background is white
+    # Invert if background is white
     if np.array(image).mean() > 127:
         image = ImageOps.invert(image)
 
-    # Find digit boundaries
     image_array = np.array(image)
 
+    # Check whether a digit exists
     if image_array.max() == 0:
         raise ValueError("No digit detected. Please draw clearly.")
 
-    # Crop around the digit
+    # Crop around digit
     bbox = image.getbbox()
 
     if bbox:
         image = image.crop(bbox)
 
-    # Resize image to MNIST size
+    # Resize while maintaining proportions
     image = ImageOps.pad(
         image,
         (20, 20),
         color=0
     )
 
-    # Add 4-pixel padding
+    # Add padding
     image = ImageOps.expand(
         image,
         border=4,
         fill=0
     )
 
-    # Ensure image is 28x28
+    # Resize to MNIST dimensions
     image = image.resize((28, 28))
 
-    # Normalize pixel values
+    # Normalize pixels
     image_array = np.array(image).astype("float32") / 255.0
-
-    # Flatten image into 784 features
-    image_array = image_array.reshape(1, 784)
 
     return image_array
 
 
 # =====================================
-# 4. PREDICT DIGIT
+# 4. SVM PREDICTION
 # =====================================
 
-def predict_digit(image):
+def predict_svm(processed):
+
+    # Flatten image for SVM
+    svm_input = processed.reshape(1, 784)
+
+    prediction = svm_model.predict(svm_input)[0]
+
+    # Get decision scores
+    scores = svm_model.decision_function(svm_input)
+
+    scores = np.asarray(scores).reshape(-1)
+
+    # Convert scores into relative ranking scores
+    exp_scores = np.exp(scores - np.max(scores))
+    probabilities = exp_scores / np.sum(exp_scores)
+
+    classes = svm_model.classes_
+
+    top_indices = np.argsort(probabilities)[::-1][:3]
+
+    results = {
+        str(classes[i]): float(probabilities[i])
+        for i in top_indices
+    }
+
+    predicted_index = np.where(classes == prediction)[0][0]
+
+    confidence = probabilities[predicted_index] * 100
+
+    message = (
+        f"Model: SVM\n"
+        f"Predicted Digit: {prediction}\n"
+        f"Relative Score: {confidence:.2f}%"
+    )
+
+    return results, message
+
+
+# =====================================
+# 5. CNN PREDICTION
+# =====================================
+
+def predict_cnn(processed):
+
+    # CNN input shape: (1, 28, 28, 1)
+    cnn_input = processed.reshape(1, 28, 28, 1)
+
+    probabilities = cnn_model.predict(
+        cnn_input,
+        verbose=0
+    )[0]
+
+    # Get predicted digit
+    prediction = int(np.argmax(probabilities))
+
+    # Get top 3 predictions
+    top_indices = np.argsort(probabilities)[::-1][:3]
+
+    results = {
+        str(int(i)): float(probabilities[i])
+        for i in top_indices
+    }
+
+    confidence = probabilities[prediction] * 100
+
+    message = (
+        f"Model: CNN\n"
+        f"Predicted Digit: {prediction}\n"
+        f"Confidence: {confidence:.2f}%"
+    )
+
+    return results, message
+
+
+# =====================================
+# 6. MAIN PREDICTION FUNCTION
+# =====================================
+
+def predict_digit(image, model_choice):
 
     try:
 
-        # Preprocess input image
         processed = preprocess_image(image)
 
-        # Predict digit
-        prediction = model.predict(processed)[0]
+        if model_choice == "SVM (Scikit-learn)":
 
-        # Get SVM decision scores
-        scores = model.decision_function(processed)
+            results, message = predict_svm(processed)
 
-        scores = np.asarray(scores)
+        elif model_choice == "CNN (TensorFlow)":
 
-        # Convert decision scores into relative scores
-        if scores.ndim == 1:
-            scores = scores.reshape(1, -1)
+            results, message = predict_cnn(processed)
 
-        scores = scores[0]
+        else:
 
-        # Softmax conversion
-        exp_scores = np.exp(scores - np.max(scores))
+            raise ValueError("Please select a valid model.")
 
-        probabilities = exp_scores / np.sum(exp_scores)
-
-        # Get top 3 predictions
-        top_indices = np.argsort(probabilities)[::-1][:3]
-
-        results = {
-            str(model.classes_[i]): float(probabilities[i])
-            for i in top_indices
-        }
-
-        confidence = probabilities[
-            np.where(model.classes_ == prediction)[0][0]
-        ] * 100
-
-        return results, (
-            f"Predicted Digit: {prediction}\n"
-            f"Relative Score: {confidence:.2f}%"
-        )
+        return results, message
 
     except Exception as error:
 
         print("ERROR DETAILS:", repr(error))
 
-        return {}, f"Error: {str(error)}"
+        return {}, f"Prediction error: {str(error)}"
 
 
 # =====================================
-# 5. GRADIO INTERFACE
+# 7. GRADIO INTERFACE
 # =====================================
 
 with gr.Blocks(
@@ -172,8 +231,19 @@ with gr.Blocks(
         ### Handwritten Digit Recognition System
 
         Draw a digit (0–9) or upload an image.
-        Our Machine Learning model will predict the digit.
+
+        Compare predictions using Machine Learning
+        and Deep Learning models.
         """
+    )
+
+    model_selector = gr.Dropdown(
+        choices=[
+            "SVM (Scikit-learn)",
+            "CNN (TensorFlow)"
+        ],
+        value="SVM (Scikit-learn)",
+        label="Select Prediction Model"
     )
 
     with gr.Row():
@@ -211,25 +281,26 @@ with gr.Blocks(
 
             result_text = gr.Textbox(
                 label="Prediction Result",
-                lines=3
+                lines=4
             )
 
-    # Prediction button
+    # Predict using sketchpad
     predict_button.click(
         fn=predict_digit,
-        inputs=[sketch],
+        inputs=[sketch, model_selector],
         outputs=[output, result_text]
     )
 
+    # Predict automatically after uploading image
     upload.change(
         fn=predict_digit,
-        inputs=[upload],
+        inputs=[upload, model_selector],
         outputs=[output, result_text]
     )
 
 
 # =====================================
-# 6. LAUNCH APPLICATION
+# 8. LAUNCH APPLICATION
 # =====================================
 
 if __name__ == "__main__":
