@@ -1,5 +1,7 @@
-gradio==6.32.0
+gradio
 numpy
-scikit-learn==1.6.1
+scikit-learn
+tensorflow
 pillow
-joblib==1.6.0
+joblib
+matplotlib
